@@ -555,12 +555,12 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                             prevViewProjMatrixStereo[eyeIndex] = GetViewProjMatrixStereo(eyeIndex); // Grabbing this before ConfigureStereoMatrices updates view/proj
                         }
 
-                        isFirstFrame = false;
+                        // isFirstFrame = false;
                     }
                 }
 
                 // XRTODO: fix this
-                isFirstFrame = true; // So that mono vars can still update when stereo active
+                // isFirstFrame = true; // So that mono vars can still update when stereo active
             }
 
             if (ShaderConfig.s_CameraRelativeRendering != 0)
