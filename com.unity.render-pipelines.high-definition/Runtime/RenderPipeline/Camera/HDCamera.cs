@@ -332,8 +332,6 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                 textureWidthScaling = new Vector4(2.0f, 0.5f, 0.0f, 0.0f);
             }
 
-            m_LastFrameActive = Time.frameCount;
-
             m_msaaSamples = msaaSamples;
 
             screenSize = new Vector4(screenWidth, screenHeight, 1.0f / screenWidth, 1.0f / screenHeight);
@@ -341,6 +339,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             
             UpdateAllViewConstants(IsTAAEnabled());
             isFirstFrame = false;
+            m_LastFrameActive = Time.frameCount;
 
             if (vlSys != null)
             {
