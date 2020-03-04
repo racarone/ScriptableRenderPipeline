@@ -2210,10 +2210,13 @@ namespace UnityEngine.Rendering.HighDefinition
 
                 RenderForwardOpaque(cullingResults, hdCamera, renderContext, cmd);
 
-                m_SharedRTManager.ResolveMSAAColor(cmd, hdCamera, m_CameraSssDiffuseLightingMSAABuffer, m_CameraSssDiffuseLightingBuffer);
-                m_SharedRTManager.ResolveMSAAColor(cmd, hdCamera, GetSSSBufferMSAA(), GetSSSBuffer());
+                if (hdCamera.frameSettings.IsEnabled(FrameSettingsField.SubsurfaceScattering))
+                {
+                    m_SharedRTManager.ResolveMSAAColor(cmd, hdCamera, m_CameraSssDiffuseLightingMSAABuffer, m_CameraSssDiffuseLightingBuffer);
+                    m_SharedRTManager.ResolveMSAAColor(cmd, hdCamera, GetSSSBufferMSAA(), GetSSSBuffer());
+                }
 
-                if(hdCamera.frameSettings.IsEnabled(FrameSettingsField.SubsurfaceScattering))
+                if (hdCamera.frameSettings.IsEnabled(FrameSettingsField.SubsurfaceScattering))
                 {
                     // We need htile for SSS, but we don't need to resolve again
                     BuildCoarseStencilAndResolveIfNeeded(hdCamera, m_SharedRTManager.GetDepthStencilBuffer(msaaEnabled),
@@ -3957,7 +3960,7 @@ namespace UnityEngine.Rendering.HighDefinition
             CoreUtils.SetKeyword(cmd, "DEBUG_DISPLAY", debugDisplayEnabledOrSceneLightingDisabled);
 
             // Setting this all the time due to a strange bug that either reports a (globally) bound texture as not bound or where SetGlobalTexture doesn't behave as expected.
-            // As a workaround we bind it regardless of debug display. Eventually with 
+            // As a workaround we bind it regardless of debug display. Eventually with
             cmd.SetGlobalTexture(HDShaderIDs._DebugMatCapTexture, defaultResources.textures.matcapTex);
 
             if (debugDisplayEnabledOrSceneLightingDisabled ||
