@@ -140,6 +140,17 @@ namespace UnityEngine.Rendering.HighDefinition
                     // Disable vsync on the main display when rendering to a XR device
                     QualitySettings.vSyncCount = 0;
 
+#if ENABLE_VR && ENABLE_XR_MODULE
+                    if (display != null)
+                    {
+                        // XRTODO: Handle stereo mode selection in URP pipeline asset UI
+                        display.textureLayout = XR.XRDisplaySubsystem.TextureLayout.Texture2DArray;
+                        display.zNear = camera.nearClipPlane;
+                        display.zFar  = camera.farClipPlane;
+                        display.sRGB  = QualitySettings.activeColorSpace == ColorSpace.Linear;
+                    }
+#endif
+
                     if (XRGraphics.renderViewportScale != 1.0f)
                     {
                         Debug.LogWarning("RenderViewportScale has no effect with this render pipeline. Use dynamic resolution instead.");
@@ -278,6 +289,9 @@ namespace UnityEngine.Rendering.HighDefinition
             {
                 display.GetRenderPass(renderPassIndex, out var renderPass);
                 display.GetCullingParameters(camera, renderPass.cullingPassIndex, out var cullingParams);
+                
+                // Disable legacy stereo culling path
+                cullingParams.cullingOptions &= ~CullingOptions.Stereo;
 
                 if (singlePassAllowed && CanUseSinglePass(renderPass))
                 {
