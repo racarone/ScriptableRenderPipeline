@@ -634,7 +634,7 @@ namespace UnityEngine.Rendering.HighDefinition
             }
         }
 
-        [SerializeField, FormerlySerializedAs("flareTint")]
+        [SerializeField, FormerlySerializedAs("flareTint"), ColorUsage(false, true)]
         Color m_FlareTint = Color.white;
         /// <summary>
         /// Tints the flare of the celestial body.
@@ -685,7 +685,7 @@ namespace UnityEngine.Rendering.HighDefinition
             }
         }
 
-        [SerializeField, FormerlySerializedAs("surfaceTint")]
+        [SerializeField, FormerlySerializedAs("surfaceTint"), ColorUsage(false, true)]
         Color m_SurfaceTint = Color.white;
         /// <summary>
         /// Tints the surface of the celestial body.
@@ -1344,7 +1344,7 @@ namespace UnityEngine.Rendering.HighDefinition
         }
 
         /// <summary>
-        /// True if the light affects volumetric fog, false otherwise 
+        /// True if the light affects volumetric fog, false otherwise
         /// </summary>
         public bool affectsVolumetric
         {

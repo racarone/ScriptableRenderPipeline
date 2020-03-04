@@ -1248,8 +1248,8 @@ namespace UnityEngine.Rendering.HighDefinition
             lightData.angularDiameter = additionalLightData.angularDiameter * Mathf.Deg2Rad;
             lightData.flareSize       = Mathf.Max(additionalLightData.flareSize * Mathf.Deg2Rad, 5.960464478e-8f);
             lightData.flareFalloff    = additionalLightData.flareFalloff;
-            lightData.flareTint       = (Vector3)(Vector4)additionalLightData.flareTint;
-            lightData.surfaceTint     = (Vector3)(Vector4)additionalLightData.surfaceTint;
+            lightData.flareTint       = (Vector3)(Vector4)additionalLightData.flareTint.linear;
+            lightData.surfaceTint     = (Vector3)(Vector4)additionalLightData.surfaceTint.linear;
 
             // Fallback to the first non shadow casting directional light.
             m_CurrentSunLight = m_CurrentSunLight == null ? lightComponent : m_CurrentSunLight;
@@ -3085,6 +3085,9 @@ namespace UnityEngine.Rendering.HighDefinition
 
         void ClearLightList(HDCamera camera, CommandBuffer cmd, ComputeBuffer bufferToClear)
         {
+            if (bufferToClear == null)
+                return;
+
             // We clear them all to be on the safe side when switching pipes.
             var cs = defaultResources.shaders.clearLightListsCS;
             var kernel = cs.FindKernel("ClearList");
