@@ -293,6 +293,9 @@ namespace UnityEngine.Rendering.HighDefinition
                 // Disable legacy stereo culling path
                 cullingParams.cullingOptions &= ~CullingOptions.Stereo;
 
+                // Disable legacy stereo culling path
+                cullingParams.cullingOptions &= ~CullingOptions.Stereo;
+
                 if (singlePassAllowed && CanUseSinglePass(renderPass))
                 {
                     var xrPass = XRPass.Create(renderPass, multipassId: framePasses.Count, cullingParams, occlusionMeshMaterial);
