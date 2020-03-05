@@ -127,6 +127,7 @@ namespace UnityEngine.Rendering.Universal
             Lightmapping.SetDelegate(lightsDelegate);
 
             CameraCaptureBridge.enabled = true;
+            GraphicsSettings.lightsUseColorTemperature = true;
 
             RenderingUtils.ClearSystemInfoCache();
         }
