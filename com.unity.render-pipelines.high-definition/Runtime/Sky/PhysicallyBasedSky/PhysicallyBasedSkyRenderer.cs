@@ -181,6 +181,7 @@ namespace UnityEngine.Rendering.HighDefinition
             cmd.SetGlobalFloat( HDShaderIDs._IntensityMultiplier,       iMul);
 
             cmd.SetGlobalVector(HDShaderIDs._AerosolSeaLevelScattering, pbrSky.GetAerosolScatteringCoefficient());
+            cmd.SetGlobalFloat( HDShaderIDs._AtmosphericDistanceScale,  pbrSky.viewDistanceScale.value);
             cmd.SetGlobalFloat( HDShaderIDs._ColorSaturation,           pbrSky.colorSaturation.value);
 
             cmd.SetGlobalVector(HDShaderIDs._GroundAlbedo,              pbrSky.groundTint.value);

@@ -582,6 +582,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
         public static readonly int _RenderSunDisk                     = Shader.PropertyToID("_RenderSunDisk");
 
+        public static readonly int _AtmosphericDistanceScale          = Shader.PropertyToID("_AtmosphericDistanceScale");
         public static readonly int _ColorSaturation                   = Shader.PropertyToID("_ColorSaturation");
         public static readonly int _AlphaSaturation                   = Shader.PropertyToID("_AlphaSaturation");
         public static readonly int _AlphaMultiplier                   = Shader.PropertyToID("_AlphaMultiplier");

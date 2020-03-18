@@ -33,6 +33,7 @@ namespace UnityEditor.Rendering.HighDefinition
         SerializedDataParameter m_AerosolTint;
         SerializedDataParameter m_AerosolAnisotropy;
 
+        SerializedDataParameter m_ViewDistanceScale;
         SerializedDataParameter m_ColorSaturation;
         SerializedDataParameter m_AlphaSaturation;
         SerializedDataParameter m_AlphaMultiplier;
@@ -78,6 +79,7 @@ namespace UnityEditor.Rendering.HighDefinition
 			m_AerosolTint              = Unpack(o.Find(x => x.aerosolTint));
 			m_AerosolAnisotropy        = Unpack(o.Find(x => x.aerosolAnisotropy));
 
+            m_ViewDistanceScale        = Unpack(o.Find(x => x.viewDistanceScale));
 			m_ColorSaturation          = Unpack(o.Find(x => x.colorSaturation));
 			m_AlphaSaturation          = Unpack(o.Find(x => x.alphaSaturation));
 			m_AlphaMultiplier          = Unpack(o.Find(x => x.alphaMultiplier));
@@ -135,6 +137,7 @@ namespace UnityEditor.Rendering.HighDefinition
 			PropertyField(m_AerosolAnisotropy);
 
             EditorGUILayout.LabelField("Artistic Overrides");
+            PropertyField(m_ViewDistanceScale);
 			PropertyField(m_ColorSaturation);
 			PropertyField(m_AlphaSaturation);
 			PropertyField(m_AlphaMultiplier);

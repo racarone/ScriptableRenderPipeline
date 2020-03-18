@@ -116,6 +116,10 @@ namespace UnityEngine.Rendering.HighDefinition
         [Tooltip("Sets the orientation of space. Does not affect the precomputation.")]
         public Vector3Parameter spaceRotation = new Vector3Parameter(Vector3.zero);
 
+        /// <summary> Scales the distance along the view ray. Does not affect the precomputation. </summary>
+        [Tooltip("Scales the distance along the view ray. Does not affect the precomputation.")]
+        public MinFloatParameter viewDistanceScale = new MinFloatParameter(1, 0);
+
         /// <summary> Color saturation. Does not affect the precomputation. </summary>
         [Tooltip("Controls the saturation of the sky color. Does not affect the precomputation.")]
         public ClampedFloatParameter colorSaturation = new ClampedFloatParameter(1, 0, 1);

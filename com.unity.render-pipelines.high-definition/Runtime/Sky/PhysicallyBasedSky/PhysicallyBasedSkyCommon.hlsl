@@ -30,6 +30,7 @@ CBUFFER_START(UnityPhysicallyBasedSky)
     float3 _AirSeaLevelScattering;
     float  _IntensityMultiplier;
 
+    float _AtmosphericDistanceScale;
     float3 _AerosolSeaLevelScattering;
     float  _ColorSaturation;
 

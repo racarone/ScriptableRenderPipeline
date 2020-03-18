@@ -326,7 +326,7 @@ void EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, out float3
         float3 skyColor = 0, skyOpacity = 0;
 
         // Convert it to distance along the ray. Doesn't work with tilt shift, etc.
-        float tFrag = posInput.linearDepth * rcp(dot(-V, GetViewForwardDir1(UNITY_MATRIX_V)));
+        float tFrag = posInput.linearDepth * rcp(dot(-V, GetViewForwardDir1(UNITY_MATRIX_V))) * _AtmosphericDistanceScale;
 
         EvaluatePbrAtmosphere(_WorldSpaceCameraPos, V, tFrag, false, skyColor, skyOpacity);
         skyColor *= _IntensityMultiplier * GetCurrentExposureMultiplier();
