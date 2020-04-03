@@ -45,32 +45,71 @@ namespace UnityEngine.Rendering.Universal.Internal
             ref CameraData cameraData = ref renderingData.cameraData;
             RenderTargetIdentifier cameraTarget = (cameraData.targetTexture != null) ? new RenderTargetIdentifier(cameraData.targetTexture) : BuiltinRenderTextureType.CameraTarget;
 
-            bool requiresSRGBConvertion = Display.main.requiresSrgbBlitToBackbuffer;
+            bool requiresSRGBConversion = Display.main.requiresSrgbBlitToBackbuffer;
 
             // For stereo case, eye texture always want color data in sRGB space.
             // If eye texture color format is linear, we do explicit sRGB convertion
 #if ENABLE_VR && ENABLE_VR_MODULE
-            if (cameraData.isStereoEnabled)
-                requiresSRGBConvertion = !XRGraphics.eyeTextureDesc.sRGB;
+            if (cameraData.xr.enabled && cameraData.camera.targetTexture == null)
+                requiresSRGBConversion = !cameraData.xr.renderTargetDesc.sRGB;
 #endif
             CommandBuffer cmd = CommandBufferPool.Get(m_ProfilerTag);
 
-            if (requiresSRGBConvertion)
-                cmd.EnableShaderKeyword(ShaderKeywordStrings.LinearToSRGBConversion);
-            else
-                cmd.DisableShaderKeyword(ShaderKeywordStrings.LinearToSRGBConversion);
+            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.LinearToSRGBConversion, requiresSRGBConversion);
 
-            // Use default blit for XR as we are not sure the UniversalRP blit handles stereo.
-            // The blit will be reworked for stereo along the XRSDK work.
-            Material blitMaterial = (cameraData.isStereoEnabled) ? null : m_BlitMaterial;
             cmd.SetGlobalTexture("_BlitTex", m_Source.Identifier());
-            if (cameraData.isStereoEnabled || cameraData.isSceneViewCamera || cameraData.isDefaultViewport)
+
+            if (cameraData.xr.enabled)
+            {
+                RenderTargetIdentifier blitTarget;
+
+                bool xrTestActive = XRSystem.automatedTestRunning && cameraData.camera.targetTexture;
+                if (xrTestActive)
+                {
+                    blitTarget = new RenderTargetIdentifier(cameraData.camera.targetTexture);
+                }
+                else
+                {
+                    int depthSlice = cameraData.xr.singlePassEnabled ? -1 : cameraData.xr.GetTextureArraySlice(0); // XRTODO: Should be multipass eye id here?
+                    blitTarget = new RenderTargetIdentifier(cameraData.xr.renderTarget, 0, CubemapFace.Unknown, depthSlice);
+                }
+
+                SetRenderTarget(
+                    cmd,
+                    blitTarget,
+                    RenderBufferLoadAction.Load,
+                    RenderBufferStoreAction.Store,
+                    ClearFlag.None,
+                    Color.black,
+                    m_TargetDimension);
+
+                cmd.SetViewport(cameraData.xr.GetViewport());
+
+                CoreUtils.SetKeyword(cmd, "BLIT_SINGLE_SLICE", xrTestActive);
+                if (xrTestActive)
+                    cmd.SetGlobalInt("_BlitTexArraySlice", 1);
+
+                // We f-flip if
+                // 1) we are bliting from render texture to back buffer(UV starts at bottom) and
+                // 2) renderTexture starts UV at top
+                bool yflip = !cameraData.xr.renderTargetIsRenderTexture && SystemInfo.graphicsUVStartsAtTop;
+                Vector4 scaleBias = yflip ? new Vector4(1, -1, 0, 1) : new Vector4(1, 1, 0, 0);
+                Vector4 scaleBiasRT = new Vector4(1, 1, 0, 0);
+                cmd.SetGlobalVector(ShaderPropertyId.blitScaleBias, scaleBias);
+                cmd.SetGlobalVector(ShaderPropertyId.blitScaleBiasRt, scaleBiasRT);
+
+                cmd.DrawProcedural(Matrix4x4.identity, m_BlitMaterial, 0, MeshTopology.Quads, 4, 1, null);
+
+                if (xrTestActive)
+                    cmd.DisableShaderKeyword("BLIT_SINGLE_SLICE");
+            }
+            else if (cameraData.isSceneViewCamera || cameraData.isDefaultViewport)
             {
                 // This set render target is necessary so we change the LOAD state to DontCare.
                 cmd.SetRenderTarget(BuiltinRenderTextureType.CameraTarget,
                     RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store,     // color
                     RenderBufferLoadAction.DontCare, RenderBufferStoreAction.DontCare); // depth
-                cmd.Blit(m_Source.Identifier(), cameraTarget, blitMaterial);
+                cmd.Blit(m_Source.Identifier(), cameraTarget, m_BlitMaterial);
             }
             else
             {
@@ -89,7 +128,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                 Camera camera = cameraData.camera;
                 cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
                 cmd.SetViewport(cameraData.pixelRect);
-                cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, blitMaterial);
+                cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_BlitMaterial);
                 cmd.SetViewProjectionMatrices(camera.worldToCameraMatrix, camera.projectionMatrix);
             }
 

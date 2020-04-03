@@ -59,8 +59,12 @@ namespace UnityEngine.Rendering.Universal
         /// Returns the camera view matrix.
         /// </summary>
         /// <returns></returns>
-        public Matrix4x4 GetViewMatrix()
+        public Matrix4x4 GetViewMatrix(int viewIndex = 0)
         {
+#if ENABLE_VR && ENABLE_VR_MODULE
+            if (xr.enabled)
+                return xr.GetViewMatrix(viewIndex);
+#endif
             return m_ViewMatrix;
         }
 
@@ -68,8 +72,12 @@ namespace UnityEngine.Rendering.Universal
         /// Returns the camera projection matrix.
         /// </summary>
         /// <returns></returns>
-        public Matrix4x4 GetProjectionMatrix()
+        public Matrix4x4 GetProjectionMatrix(int viewIndex = 0)
         {
+#if ENABLE_VR && ENABLE_VR_MODULE
+            if (xr.enabled)
+                return xr.GetProjMatrix(viewIndex);
+#endif      
             return m_ProjectionMatrix;
         }
 
@@ -80,9 +88,9 @@ namespace UnityEngine.Rendering.Universal
         /// </summary>
         /// <seealso cref="GL.GetGPUProjectionMatrix(Matrix4x4, bool)"/>
         /// <returns></returns>
-        public Matrix4x4 GetGPUProjectionMatrix()
+        public Matrix4x4 GetGPUProjectionMatrix(int viewIndex = 0)
         {
-            return GL.GetGPUProjectionMatrix(m_ProjectionMatrix, IsCameraProjectionMatrixFlipped());
+            return GL.GetGPUProjectionMatrix(GetProjectionMatrix(viewIndex), IsCameraProjectionMatrixFlipped());
         }
 
         public Camera camera;
@@ -124,9 +132,10 @@ namespace UnityEngine.Rendering.Universal
 
         public SortingCriteria defaultOpaqueSortFlags;
 
-        public bool isStereoEnabled;
-        internal int numberOfXRPasses;
-        internal bool isXRMultipass;
+        internal XRPass xr;
+
+        [Obsolete]
+        public bool isStereoEnabled { get => xr != null && xr.enabled; }
 
         public float maxShadowDistance;
         public bool postProcessEnabled;
@@ -187,6 +196,10 @@ namespace UnityEngine.Rendering.Universal
         public static readonly int inverseCameraProjectionMatrix = Shader.PropertyToID("unity_CameraInvProjection");
         public static readonly int worldToCameraMatrix = Shader.PropertyToID("unity_WorldToCamera");
         public static readonly int cameraToWorldMatrix = Shader.PropertyToID("unity_CameraToWorld");
+
+        public static readonly int blitTex = Shader.PropertyToID("_BlitTex");
+        public static readonly int blitScaleBias = Shader.PropertyToID("_BlitScaleBias");
+        public static readonly int blitScaleBiasRt = Shader.PropertyToID("_BlitScaleBiasRt");
     }
 
     public struct PostProcessingData
@@ -240,6 +253,9 @@ namespace UnityEngine.Rendering.Universal
         public static readonly string Dithering = "_DITHERING";
 
         public static readonly string HighQualitySampling = "_HIGH_QUALITY_SAMPLING";
+
+        // XR
+        public static readonly string DrawProceduleQuadBlit = "_DRAW_PROCEDURE_QUAD_BLIT";
     }
 
     public sealed partial class UniversalRenderPipeline
@@ -264,17 +280,13 @@ namespace UnityEngine.Rendering.Universal
         /// </summary>
         /// <param name="camera">Camera to check state from.</param>
         /// <returns>Returns true if the given camera is rendering in stereo mode, false otherwise.</returns>
+        [Obsolete]
         public static bool IsStereoEnabled(Camera camera)
         {
             if (camera == null)
                 throw new ArgumentNullException("camera");
 
-            bool isGameCamera = IsGameCamera(camera);
-            bool isCompatWithXRDimension = true;
-#if ENABLE_VR && ENABLE_VR_MODULE
-            isCompatWithXRDimension &= (camera.targetTexture ? camera.targetTexture.dimension == UnityEngine.XR.XRSettings.deviceEyeTextureDimension : true);
-#endif
-            return XRGraphics.enabled && isGameCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both) && isCompatWithXRDimension;
+            return IsGameCamera(camera) && (camera.stereoTargetEye == StereoTargetEyeMask.Both);
         }
 
         /// <summary>
@@ -291,16 +303,13 @@ namespace UnityEngine.Rendering.Universal
         /// </summary>
         /// <param name="camera">Camera to check state from.</param>
         /// <returns>Returns true if the given camera is rendering in multi pass stereo mode, false otherwise.</returns>
+        [Obsolete]
         static bool IsMultiPassStereoEnabled(Camera camera)
         {
             if (camera == null)
                 throw new ArgumentNullException("camera");
 
-#if ENABLE_VR && ENABLE_VR_MODULE
-            return IsStereoEnabled(camera) && XR.XRSettings.stereoRenderingMode == XR.XRSettings.StereoRenderingMode.MultiPass;
-#else
             return false;
-#endif
         }
 
         void SortCameras(Camera[] cameras)
@@ -311,21 +320,12 @@ namespace UnityEngine.Rendering.Universal
         }
 
         static RenderTextureDescriptor CreateRenderTextureDescriptor(Camera camera, float renderScale,
-            bool isStereoEnabled, bool isHdrEnabled, int msaaSamples, bool needsAlpha)
+            bool isHdrEnabled, int msaaSamples, bool needsAlpha)
         {
             RenderTextureDescriptor desc;
             GraphicsFormat renderTextureFormatDefault = SystemInfo.GetGraphicsFormat(DefaultFormat.LDR);
 
-            // NB: There's a weird case about XR and render texture
-            // In test framework currently we render stereo tests to target texture
-            // The descriptor in that case needs to be initialized from XR eyeTexture not render texture
-            // Otherwise current tests will fail. Check: Do we need to update the test images instead?
-            if (isStereoEnabled)
-            {
-                desc = XRGraphics.eyeTextureDesc;
-                renderTextureFormatDefault = desc.graphicsFormat;
-            }
-            else if (camera.targetTexture == null)
+            if (camera.targetTexture == null)
             {
                 desc = new RenderTextureDescriptor(camera.pixelWidth, camera.pixelHeight);
                 desc.width = (int)((float)desc.width * renderScale);

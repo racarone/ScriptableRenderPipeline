@@ -51,6 +51,8 @@ namespace UnityEngine.Rendering.Universal
 
         public ForwardRenderer(ForwardRendererData data) : base(data)
         {
+            UniversalRenderPipeline.m_XRSystem.InitializeXRSystemData(data.xrSystemData);
+
             m_BlitMaterial = CoreUtils.CreateEngineMaterial(data.shaders.blitPS);
             m_CopyDepthMaterial = CoreUtils.CreateEngineMaterial(data.shaders.copyDepthPS);
             m_SamplingMaterial = CoreUtils.CreateEngineMaterial(data.shaders.samplingPS);
@@ -73,7 +75,7 @@ namespace UnityEngine.Rendering.Universal
             m_RenderOpaqueForwardPass = new DrawObjectsPass("Render Opaques", true, RenderPassEvent.BeforeRenderingOpaques, RenderQueueRange.opaque, data.opaqueLayerMask, m_DefaultStencilState, stencilData.stencilReference);
             m_CopyDepthPass = new CopyDepthPass(RenderPassEvent.AfterRenderingSkybox, m_CopyDepthMaterial);
             m_DrawSkyboxPass = new DrawSkyboxPass(RenderPassEvent.BeforeRenderingSkybox);
-            m_CopyColorPass = new CopyColorPass(RenderPassEvent.BeforeRenderingTransparents, m_SamplingMaterial);
+            m_CopyColorPass = new CopyColorPass(RenderPassEvent.BeforeRenderingTransparents, m_SamplingMaterial, m_BlitMaterial);
             m_TransparentSettingsPass = new TransparentSettingsPass(RenderPassEvent.BeforeRenderingTransparents, data.shadowTransparentReceive);
             m_RenderTransparentForwardPass = new DrawObjectsPass("Render Transparents", false, RenderPassEvent.BeforeRenderingTransparents, RenderQueueRange.transparent, data.transparentLayerMask, m_DefaultStencilState, stencilData.stencilReference);
             m_OnRenderObjectCallbackPass = new InvokeOnRenderObjectCallbackPass(RenderPassEvent.BeforeRenderingPostProcessing);
@@ -118,7 +120,16 @@ namespace UnityEngine.Rendering.Universal
         {
             Camera camera = renderingData.cameraData.camera;
             ref CameraData cameraData = ref renderingData.cameraData;
-            RenderTextureDescriptor cameraTargetDescriptor = renderingData.cameraData.cameraTargetDescriptor;
+            ref RenderTextureDescriptor cameraTargetDescriptor = ref renderingData.cameraData.cameraTargetDescriptor;
+#if ENABLE_VR && ENABLE_VR_MODULE
+            if (cameraData.xr.enabled)
+            {
+                cameraTargetDescriptor = cameraData.xr.renderTargetDesc;
+                // In case of HDR, assign camera target hdr format to descriptor. This descriptor is later being used to create intermediate texture
+                if(cameraData.isHdrEnabled)
+                    cameraTargetDescriptor.colorFormat = cameraData.cameraTargetDescriptor.colorFormat;
+            }
+#endif
 
             // Special path for depth only offscreen cameras. Only write opaques + transparents.
             bool isOffscreenDepthTexture = cameraData.targetTexture != null && cameraData.targetTexture.format == RenderTextureFormat.Depth;
@@ -148,7 +159,6 @@ namespace UnityEngine.Rendering.Universal
             bool generateColorGradingLUT = anyPostProcessing && cameraData.renderType == CameraRenderType.Base;
             bool isSceneViewCamera = cameraData.isSceneViewCamera;
             bool requiresDepthTexture = cameraData.requiresDepthTexture;
-            bool isStereoEnabled = cameraData.isStereoEnabled;
 
             bool mainLightShadows = m_MainLightShadowCasterPass.Setup(ref renderingData);
             bool additionalLightShadows = m_AdditionalLightsShadowCasterPass.Setup(ref renderingData);
@@ -166,7 +176,7 @@ namespace UnityEngine.Rendering.Universal
 
             // TODO: CopyDepth pass is disabled in XR due to required work to handle camera matrices in URP.
             // IF this condition is removed make sure the CopyDepthPass.cs is working properly on all XR modes. This requires PureXR SDK integration.
-            if (isStereoEnabled && requiresDepthTexture)
+            if (cameraData.xr.enabled && requiresDepthTexture)
                 requiresDepthPrepass = true;
 
             bool createColorTexture = RequiresIntermediateColorTexture(ref cameraData);
@@ -187,21 +197,29 @@ namespace UnityEngine.Rendering.Universal
             // Configure all settings require to start a new camera stack (base camera only)
             if (cameraData.renderType == CameraRenderType.Base)
             {
-                m_ActiveCameraColorAttachment = (createColorTexture) ? m_CameraColorAttachment : RenderTargetHandle.CameraTarget;
-                m_ActiveCameraDepthAttachment = (createDepthTexture) ? m_CameraDepthAttachment : RenderTargetHandle.CameraTarget;
+                RenderTargetHandle cameraTargetHandle = RenderTargetHandle.CameraTarget;
+#if ENABLE_VR && ENABLE_VR_MODULE
+                if(cameraData.xr.enabled)
+                    cameraTargetHandle.Init(cameraData.xr.renderTarget);
+#endif
+                m_ActiveCameraColorAttachment = (createColorTexture) ? m_CameraColorAttachment : cameraTargetHandle;
+                m_ActiveCameraDepthAttachment = (createDepthTexture) ? m_CameraDepthAttachment : cameraTargetHandle;
 
                 bool intermediateRenderTexture = createColorTexture || createDepthTexture;
 
                 // Doesn't create texture for Overlay cameras as they are already overlaying on top of created textures.
                 bool createTextures = intermediateRenderTexture;
+
+                // XRTODO: intermediate texture dimension could be different from camera target texture dimension.
+                // Upgrade the logic here to handle multipass render to texture array case and spi render to N texture 2d case
                 if (createTextures)
-                    CreateCameraRenderTarget(context, ref renderingData.cameraData);
+                    CreateCameraRenderTarget(context, ref cameraTargetDescriptor, createColorTexture, createDepthTexture);
 
                 // if rendering to intermediate render texture we don't have to create msaa backbuffer
                 int backbufferMsaaSamples = (intermediateRenderTexture) ? 1 : cameraTargetDescriptor.msaaSamples;
 
                 if (Camera.main == camera && camera.cameraType == CameraType.Game && cameraData.targetTexture == null)
-                    SetupBackbufferFormat(backbufferMsaaSamples, isStereoEnabled);
+                    SetupBackbufferFormat(backbufferMsaaSamples, cameraData.xr.enabled);
             }
             else
             {
@@ -209,7 +227,8 @@ namespace UnityEngine.Rendering.Universal
                 m_ActiveCameraDepthAttachment = m_CameraDepthAttachment;
             }
 
-            ConfigureCameraTarget(m_ActiveCameraColorAttachment.Identifier(), m_ActiveCameraDepthAttachment.Identifier());
+            // XRTODO: ConfigureCameraTarget Should also support depthslice. In XR, camera target could be texture2DArray type and multipass rendering need to be able to render to depthslide 0/1 separately
+            ConfigureCameraTarget(m_ActiveCameraColorAttachment.Identifier(), m_ActiveCameraDepthAttachment.Identifier(), cameraTargetDescriptor.dimension);
 
             for (int i = 0; i < rendererFeatures.Count; ++i)
             {
@@ -284,13 +303,17 @@ namespace UnityEngine.Rendering.Universal
 
             if (lastCameraInTheStack)
             {
+                bool cameraColorAttachmentIsCameraTarget = m_ActiveCameraColorAttachment == RenderTargetHandle.CameraTarget;
+                if (cameraData.xr.enabled)
+                    cameraColorAttachmentIsCameraTarget = m_ActiveCameraColorAttachment.Identifier() == cameraData.xr.renderTarget;
+
                 // Post-processing will resolve to final target. No need for final blit pass.
                 if (applyPostProcessing)
                 {
                     var destination = resolvePostProcessingToCameraTarget ? RenderTargetHandle.CameraTarget : m_AfterPostProcessColor;
 
                     // if resolving to screen we need to be able to perform sRGBConvertion in post-processing if necessary
-                    bool doSRGBConvertion = resolvePostProcessingToCameraTarget;
+                    bool doSRGBConvertion = !(dontResolvePostProcessingToCameraTarget || !cameraColorAttachmentIsCameraTarget);
                     m_PostProcessPass.Setup(cameraTargetDescriptor, m_ActiveCameraColorAttachment, destination, m_ActiveCameraDepthAttachment, m_ColorGradingLut, applyFinalPostProcessing, doSRGBConvertion);
                     EnqueuePass(m_PostProcessPass);
                 }
@@ -311,6 +334,7 @@ namespace UnityEngine.Rendering.Universal
                     EnqueuePass(m_FinalPostProcessPass);
                 }
 
+
                 // if post-processing then we already resolved to camera target while doing post.
                 // Also only do final blit if camera is not rendering to RT.
                 bool cameraTargetResolved =
@@ -319,7 +343,7 @@ namespace UnityEngine.Rendering.Universal
                     // no final PP but we have PP stack. In that case it blit unless there are render pass after PP
                     (applyPostProcessing && !hasPassesAfterPostProcessing) ||
                     // offscreen camera rendering to a texture, we don't need a blit pass to resolve to screen
-                    m_ActiveCameraColorAttachment == RenderTargetHandle.CameraTarget;
+                    cameraColorAttachmentIsCameraTarget;
 
                 // We need final blit to resolve to screen
                 if (!cameraTargetResolved)
@@ -394,12 +418,11 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
-        void CreateCameraRenderTarget(ScriptableRenderContext context, ref CameraData cameraData)
+        void CreateCameraRenderTarget(ScriptableRenderContext context, ref RenderTextureDescriptor descriptor, bool createColor, bool createDepth)
         {
             CommandBuffer cmd = CommandBufferPool.Get(k_CreateCameraTextures);
-            var descriptor = cameraData.cameraTargetDescriptor;
             int msaaSamples = descriptor.msaaSamples;
-            if (m_ActiveCameraColorAttachment != RenderTargetHandle.CameraTarget)
+            if (createColor)
             {
                 bool useDepthRenderBuffer = m_ActiveCameraDepthAttachment == RenderTargetHandle.CameraTarget;
                 var colorDescriptor = descriptor;
@@ -407,7 +430,7 @@ namespace UnityEngine.Rendering.Universal
                 cmd.GetTemporaryRT(m_ActiveCameraColorAttachment.id, colorDescriptor, FilterMode.Bilinear);
             }
 
-            if (m_ActiveCameraDepthAttachment != RenderTargetHandle.CameraTarget)
+            if (createDepth)
             {
                 var depthDescriptor = descriptor;
                 depthDescriptor.colorFormat = RenderTextureFormat.Depth;
@@ -420,7 +443,7 @@ namespace UnityEngine.Rendering.Universal
             CommandBufferPool.Release(cmd);
         }
 
-        void SetupBackbufferFormat(int msaaSamples, bool stereo)
+        void SetupBackbufferFormat(int msaaSamples, bool xrEnabled)
         {
 #if ENABLE_VR && ENABLE_VR_MODULE
             bool msaaSampleCountHasChanged = false;
@@ -437,7 +460,7 @@ namespace UnityEngine.Rendering.Universal
             // This settings should not be changed on a frame basis so that's fine.
             QualitySettings.antiAliasing = msaaSamples;
 
-            if (stereo && msaaSampleCountHasChanged)
+            if (xrEnabled && msaaSampleCountHasChanged)
                 XR.XRDevice.UpdateEyeTextureMSAASetting();
 #endif
         }
@@ -457,16 +480,18 @@ namespace UnityEngine.Rendering.Universal
 
             var cameraTargetDescriptor = cameraData.cameraTargetDescriptor;
             int msaaSamples = cameraTargetDescriptor.msaaSamples;
-            bool isStereoEnabled = cameraData.isStereoEnabled;
-            bool isScaledRender = !Mathf.Approximately(cameraData.renderScale, 1.0f) && !cameraData.isStereoEnabled;
+            bool isScaledRender = !Mathf.Approximately(cameraData.renderScale, 1.0f);
             bool isCompatibleBackbufferTextureDimension = cameraTargetDescriptor.dimension == TextureDimension.Tex2D;
             bool requiresExplicitMsaaResolve = msaaSamples > 1 && !SystemInfo.supportsMultisampleAutoResolve;
             bool isOffscreenRender = cameraData.targetTexture != null && !cameraData.isSceneViewCamera;
             bool isCapturing = cameraData.captureActions != null;
-
+            bool requiresExplicitSRGBCorrection = Display.main.requiresBlitToBackbuffer;
 #if ENABLE_VR && ENABLE_VR_MODULE
-            if (isStereoEnabled)
-                isCompatibleBackbufferTextureDimension = UnityEngine.XR.XRSettings.deviceEyeTextureDimension == cameraTargetDescriptor.dimension;
+            if (cameraData.xr.enabled)
+            {
+                isCompatibleBackbufferTextureDimension = cameraData.xr.renderTargetDesc.dimension == cameraTargetDescriptor.dimension;
+                requiresExplicitSRGBCorrection = !cameraData.xr.renderTargetDesc.sRGB;
+            }
 #endif
 
             bool requiresBlitForOffscreenCamera = cameraData.postProcessEnabled || cameraData.requiresOpaqueTexture || requiresExplicitMsaaResolve || !cameraData.isDefaultViewport;
@@ -474,7 +499,7 @@ namespace UnityEngine.Rendering.Universal
                 return requiresBlitForOffscreenCamera;
 
             return requiresBlitForOffscreenCamera || cameraData.isSceneViewCamera || isScaledRender || cameraData.isHdrEnabled ||
-                   !isCompatibleBackbufferTextureDimension || isCapturing || (Display.main.requiresBlitToBackbuffer && !isStereoEnabled);
+                   !isCompatibleBackbufferTextureDimension || isCapturing || requiresExplicitSRGBCorrection;
         }
 
         bool CanCopyDepth(ref CameraData cameraData)

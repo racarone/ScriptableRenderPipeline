@@ -124,6 +124,94 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
+
+#if ENABLE_VR && ENABLE_VR_MODULE
+        internal static readonly int UNITY_STEREO_MATRIX_V = Shader.PropertyToID("unity_StereoMatrixV");
+        internal static readonly int UNITY_STEREO_MATRIX_IV = Shader.PropertyToID("unity_StereoMatrixInvV");
+        internal static readonly int UNITY_STEREO_MATRIX_P = Shader.PropertyToID("unity_StereoMatrixP");
+        internal static readonly int UNITY_STEREO_MATRIX_IP = Shader.PropertyToID("unity_StereoMatrixIP");
+        internal static readonly int UNITY_STEREO_MATRIX_VP = Shader.PropertyToID("unity_StereoMatrixVP");
+        internal static readonly int UNITY_STEREO_MATRIX_IVP = Shader.PropertyToID("unity_StereoMatrixIVP");
+        internal static readonly int UNITY_STEREO_VECTOR_CAMPOS = Shader.PropertyToID("unity_StereoWorldSpaceCameraPos");
+
+        // Hold the stereo matrices in this class to avoid allocating arrays every frame
+        // XRTODO: revisit this code once everything is working
+        class StereoConstants
+        {
+            public Matrix4x4[] viewProjMatrix = new Matrix4x4[2];
+            public Matrix4x4[] invViewMatrix = new Matrix4x4[2];
+            public Matrix4x4[] invProjMatrix = new Matrix4x4[2];
+            public Matrix4x4[] invViewProjMatrix = new Matrix4x4[2];
+            public Vector4[] worldSpaceCameraPos = new Vector4[2];
+        };
+
+        static readonly StereoConstants stereoConstants = new StereoConstants();
+
+        /// <summary>
+        /// Helper function to set all view and projection related matricies
+        /// Should be called before draw call and after cmd.SetRenderTarget 
+        /// Interal usage only, function name and signature may be subject to change
+        /// </summary>
+        /// <param name="cmd">CommandBuffer to submit data to GPU.</param>
+        /// <param name="viewMatrix">View matrix to be set. Array size is 2.</param>
+        /// <param name="projectionMatrix">Projection matrix to be set.Array size is 2.</param>
+        /// <param name="setInverseMatrices">Set this to true if you also need to set inverse camera matrices.</param>
+        /// <returns>Void</c></returns>
+        internal static void SetStereoViewAndProjectionMatrices(CommandBuffer cmd, Matrix4x4[] viewMatrix, Matrix4x4[] projMatrix, bool setInverseMatrices)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                stereoConstants.viewProjMatrix[i] = projMatrix[i] * viewMatrix[i];
+                stereoConstants.invViewMatrix[i] = Matrix4x4.Inverse(viewMatrix[i]);
+                stereoConstants.invProjMatrix[i] = Matrix4x4.Inverse(projMatrix[i]);
+                stereoConstants.invViewProjMatrix[i] = Matrix4x4.Inverse(stereoConstants.viewProjMatrix[i]);
+                stereoConstants.worldSpaceCameraPos[i] = stereoConstants.invViewMatrix[i].GetColumn(3);
+            }
+
+            cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_V, viewMatrix);
+            cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_P, projMatrix);
+            cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_VP, stereoConstants.viewProjMatrix);
+            if (setInverseMatrices)
+            {
+                cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_IV, stereoConstants.invViewMatrix);
+                cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_IP, stereoConstants.invProjMatrix);
+                cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_IVP, stereoConstants.invViewProjMatrix);
+            }
+            cmd.SetGlobalVectorArray(UNITY_STEREO_VECTOR_CAMPOS, stereoConstants.worldSpaceCameraPos);
+        }
+#endif
+
+        internal static void Blit(CommandBuffer cmd,
+            RenderTargetIdentifier source,
+            RenderTargetIdentifier destination,
+            Material material,
+            int passIndex = 0,
+            MaterialPropertyBlock materialProperty = null,
+            bool useDrawProcedureBlit = false,
+            RenderBufferLoadAction colorLoadAction = RenderBufferLoadAction.Load,
+            RenderBufferStoreAction colorStoreAction = RenderBufferStoreAction.Store,
+            RenderBufferLoadAction depthLoadAction = RenderBufferLoadAction.Load,
+            RenderBufferStoreAction depthStoreAction = RenderBufferStoreAction.Store
+        )
+        {
+            cmd.SetGlobalTexture(ShaderPropertyId.blitTex, source);
+            if (useDrawProcedureBlit)
+            {
+                Vector4 scaleBias = new Vector4(1, 1, 0, 0);
+                Vector4 scaleBiasRT = new Vector4(1, 1, 0, 0);
+                cmd.SetGlobalVector(ShaderPropertyId.blitScaleBias, scaleBias);
+                cmd.SetGlobalVector(ShaderPropertyId.blitScaleBiasRt, scaleBiasRT);
+                cmd.SetRenderTarget(new RenderTargetIdentifier(destination, 0, CubemapFace.Unknown, -1),
+                    colorLoadAction, colorStoreAction, depthLoadAction, depthStoreAction);
+                cmd.DrawProcedural(Matrix4x4.identity, material, passIndex, MeshTopology.Quads, 4, 1, materialProperty);
+            }
+            else
+            {
+                cmd.SetRenderTarget(destination, colorLoadAction, colorStoreAction, depthLoadAction, depthStoreAction);
+                cmd.Blit(source, BuiltinRenderTextureType.CurrentActive, material, passIndex);
+            }
+        }
+
         // This is used to render materials that contain built-in shader passes not compatible with URP. 
         // It will render those legacy passes with error/pink shader.
         [Conditional("DEVELOPMENT_BUILD"), Conditional("UNITY_EDITOR")]

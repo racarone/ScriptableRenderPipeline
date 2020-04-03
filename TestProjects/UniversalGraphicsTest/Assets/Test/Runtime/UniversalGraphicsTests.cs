@@ -33,6 +33,19 @@ public class UniversalGraphicsTests
         var settings = Object.FindObjectOfType<UniversalGraphicsTestSettings>();
         Assert.IsNotNull(settings, "Invalid test scene, couldn't find UniversalGraphicsTestSettings");
 
+        if (XRSystem.testModeEnabled)
+        {
+            if (settings.xrCompatible)
+            {
+                XRSystem.automatedTestRunning = true;
+            }
+            else
+            {
+                // Skip incompatible XR tests
+                yield break;
+            }
+        }
+
         Scene scene = SceneManager.GetActiveScene();
 
         if (scene.name.Substring(3, 4).Equals("_xr_"))
@@ -111,6 +124,12 @@ public class UniversalGraphicsTests
     public void DumpImagesInEditor()
     {
         UnityEditor.TestTools.Graphics.ResultsUtility.ExtractImagesFromTestProperties(TestContext.CurrentContext.Test);
+    }
+
+    [TearDown]
+    public void ResetSystemState()
+    {
+        XRSystem.automatedTestRunning = false;
     }
 #endif
 }

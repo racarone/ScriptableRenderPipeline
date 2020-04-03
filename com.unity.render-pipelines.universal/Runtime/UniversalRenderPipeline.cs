@@ -39,6 +39,7 @@ namespace UnityEngine.Rendering.Universal
 
         const string k_RenderCameraTag = "Render Camera";
         static ProfilingSampler _CameraProfilingSampler = new ProfilingSampler(k_RenderCameraTag);
+        internal static XRSystem m_XRSystem = new XRSystem();
 
         public static float maxShadowBias
         {
@@ -103,8 +104,8 @@ namespace UnityEngine.Rendering.Universal
 #endif
             }
 
-#if ENABLE_VR && ENABLE_VR_MODULE
-            XRGraphics.eyeTextureResolutionScale = asset.renderScale;
+#if ENABLE_VR && ENABLE_XR_MODULE
+            XRSystem.UpdateRenderScale(asset.renderScale);
 #endif
             // For compatibility reasons we also match old LightweightPipeline tag.
             Shader.globalRenderPipeline = "UniversalPipeline,LightweightPipeline";
@@ -188,6 +189,21 @@ namespace UnityEngine.Rendering.Universal
             RenderSingleCamera(context, cameraData, cameraData.postProcessEnabled);
         }
 
+        static bool TryGetCullingParameters(CameraData cameraData, out ScriptableCullingParameters cullingParams)
+        {
+            if (cameraData.xr.enabled)
+            {
+                cullingParams = cameraData.xr.cullingParams;
+                return true;
+            }
+            else
+            {
+                if (!cameraData.camera.TryGetCullingParameters(false, out cullingParams))
+                    return false;
+            }
+            return true;
+        }
+
         /// <summary>
         /// Renders a single camera. This method will do culling, setup and execution of the renderer.
         /// </summary>
@@ -204,20 +220,25 @@ namespace UnityEngine.Rendering.Universal
                 return;
             }
 
-            if (!camera.TryGetCullingParameters(IsStereoEnabled(camera), out var cullingParameters))
-                return;
-
-            ScriptableRenderer.current = renderer;
-
-            ProfilingSampler sampler = (asset.debugLevel >= PipelineDebugLevel.Profiling) ? new ProfilingSampler(camera.name): _CameraProfilingSampler;
-            CommandBuffer cmd = CommandBufferPool.Get(sampler.name);
-            using (new ProfilingScope(cmd, sampler))
+            var xrPasses = m_XRSystem.SetupFrame(ref cameraData, /*XRTODO XR single pass settings in urp asset pipeline*/ true, /*XRTODO: test mode*/ false);
+            foreach (XRPass xrPass in xrPasses)
             {
-                renderer.Clear(cameraData.renderType);
-                renderer.SetupCullingParameters(ref cullingParameters, ref cameraData);
+                cameraData.xr = xrPass;
 
-                context.ExecuteCommandBuffer(cmd);
-                cmd.Clear();
+                if (!TryGetCullingParameters(cameraData, out var cullingParameters))
+                    return;
+
+                ScriptableRenderer.current = renderer;
+
+                ProfilingSampler sampler = (asset.debugLevel >= PipelineDebugLevel.Profiling) ? new ProfilingSampler(camera.name) : _CameraProfilingSampler;
+                CommandBuffer cmd = CommandBufferPool.Get(sampler.name);
+                using (new ProfilingScope(cmd, sampler))
+                {
+                    renderer.Clear(cameraData.renderType);
+                    renderer.SetupCullingParameters(ref cullingParameters, ref cameraData);
+
+                    context.ExecuteCommandBuffer(cmd);
+                    cmd.Clear();
 
 #if UNITY_EDITOR
                 // Emit scene view UI
@@ -227,17 +248,33 @@ namespace UnityEngine.Rendering.Universal
                 }
 #endif
 
-                var cullResults = context.Cull(ref cullingParameters);
-                InitializeRenderingData(asset, ref cameraData, ref cullResults, anyPostProcessingEnabled, out var renderingData);
+                    var cullResults = context.Cull(ref cullingParameters);
+                    InitializeRenderingData(asset, ref cameraData, ref cullResults, anyPostProcessingEnabled, out var renderingData);
 
-                renderer.Setup(context, ref renderingData);
-                renderer.Execute(context, ref renderingData);
+                    renderer.Setup(context, ref renderingData);
+                    renderer.Execute(context, ref renderingData);
+                }
+                context.ExecuteCommandBuffer(cmd);
+                // context submit is required here. Shadow pass is executed out of order 
+                // and we need to ensure we submit the shadow pass work before starting the next shadow pass.
+                context.Submit();
+                CommandBufferPool.Release(cmd);
+
+                cameraData.xr = null;
             }
 
-            context.ExecuteCommandBuffer(cmd);
-            CommandBufferPool.Release(cmd);
+            // Render XR mirror view once all xr passes have been completed
+            if (cameraData.camera.cameraType == CameraType.Game && cameraData.resolveFinalTarget)
+            {
+                CommandBuffer cmd = CommandBufferPool.Get();
+                m_XRSystem.RenderMirrorView(cmd, ref cameraData);
+                context.ExecuteCommandBuffer(cmd);
+                CommandBufferPool.Release(cmd);
+            }
+
             context.Submit();
 
+            m_XRSystem.ReleaseFrame();
             ScriptableRenderer.current = null;
         }
 
@@ -269,38 +306,30 @@ namespace UnityEngine.Rendering.Universal
             int lastActiveOverlayCameraIndex = -1;
             if (cameraStack != null && cameraStack.Count > 0)
             {
-                // TODO: Add support to camera stack in VR multi pass mode
-                if (!IsMultiPassStereoEnabled(baseCamera))
+                var baseCameraRendererType = baseCameraAdditionalData?.scriptableRenderer.GetType();
+
+                for (int i = 0; i < cameraStack.Count; ++i)
                 {
-                    var baseCameraRendererType = baseCameraAdditionalData?.scriptableRenderer.GetType();
+                    Camera currCamera = cameraStack[i];
 
-                    for (int i = 0; i < cameraStack.Count; ++i)
+                    if (currCamera != null && currCamera.isActiveAndEnabled)
                     {
-                        Camera currCamera = cameraStack[i];
+                        currCamera.TryGetComponent<UniversalAdditionalCameraData>(out var data);
 
-                        if (currCamera != null && currCamera.isActiveAndEnabled)
+                        if (data == null || data.renderType != CameraRenderType.Overlay)
                         {
-                            currCamera.TryGetComponent<UniversalAdditionalCameraData>(out var data);
-
-                            if (data == null || data.renderType != CameraRenderType.Overlay)
-                            {
-                                Debug.LogWarning(string.Format("Stack can only contain Overlay cameras. {0} will skip rendering.", currCamera.name));
-                            }
-                            else if (data?.scriptableRenderer.GetType() != baseCameraRendererType)
-                            {
-                                Debug.LogWarning(string.Format("Only cameras with the same renderer type as the base camera can be stacked. {0} will skip rendering", currCamera.name));
-                            }
-                            else
-                            {
-                                anyPostProcessingEnabled |= data.renderPostProcessing;
-                                lastActiveOverlayCameraIndex = i;
-                            }
+                            Debug.LogWarning(string.Format("Stack can only contain Overlay cameras. {0} will skip rendering.", currCamera.name));
+                        }
+                        else if (data?.scriptableRenderer.GetType() != baseCameraRendererType)
+                        {
+                            Debug.LogWarning(string.Format("Only cameras with the same renderer type as the base camera can be stacked. {0} will skip rendering", currCamera.name));
+                        }
+                        else
+                        {
+                            anyPostProcessingEnabled |= data.renderPostProcessing;
+                            lastActiveOverlayCameraIndex = i;
                         }
                     }
-                }
-                else
-                {
-                    Debug.LogWarning("Multi pass stereo mode doesn't support Camera Stacking. Overlay cameras will skip rendering.");
                 }
             }
 
@@ -323,6 +352,10 @@ namespace UnityEngine.Rendering.Universal
             for (int i = 0; i < cameraStack.Count; ++i)
             {
                 var currCamera = cameraStack[i];
+
+                // XRTODO: Enable the following warning message if multipass is on. We need to add stereo mode to URP asset pipeline so we can query stereo mode here.
+                // if (multipass)
+                //      Debug.LogWarning("Multi pass stereo mode doesn't support Camera Stacking. Overlay cameras will skip rendering.");
 
                 if (!currCamera.isActiveAndEnabled)
                     continue;
@@ -432,19 +465,7 @@ namespace UnityEngine.Rendering.Universal
         {
             var settings = asset;
             cameraData.targetTexture = baseCamera.targetTexture;
-            cameraData.isStereoEnabled = IsStereoEnabled(baseCamera);
             cameraData.isSceneViewCamera = baseCamera.cameraType == CameraType.SceneView;
-
-            cameraData.numberOfXRPasses = 1;
-            cameraData.isXRMultipass = false;
-
-#if ENABLE_VR && ENABLE_VR_MODULE
-            if (cameraData.isStereoEnabled && !cameraData.isSceneViewCamera && XR.XRSettings.stereoRenderingMode == XR.XRSettings.StereoRenderingMode.MultiPass)
-            {
-                cameraData.numberOfXRPasses = 2;
-                cameraData.isXRMultipass = true;
-            }
-#endif
 
             ///////////////////////////////////////////////////////////////////
             // Environment and Post-processing settings                       /
@@ -493,12 +514,15 @@ namespace UnityEngine.Rendering.Universal
             cameraData.isDefaultViewport = (!(Math.Abs(cameraRect.x) > 0.0f || Math.Abs(cameraRect.y) > 0.0f ||
                 Math.Abs(cameraRect.width) < 1.0f || Math.Abs(cameraRect.height) < 1.0f));
 
-            // If XR is enabled, use XR renderScale.
             // Discard variations lesser than kRenderScaleThreshold.
             // Scale is only enabled for gameview.
             const float kRenderScaleThreshold = 0.05f;
-            float usedRenderScale = XRGraphics.enabled ? XRGraphics.eyeTextureResolutionScale : settings.renderScale;
-            cameraData.renderScale = (Mathf.Abs(1.0f - usedRenderScale) < kRenderScaleThreshold) ? 1.0f : usedRenderScale;
+            cameraData.renderScale = (Mathf.Abs(1.0f - settings.renderScale) < kRenderScaleThreshold) ? 1.0f : settings.renderScale;
+
+#if ENABLE_VR && ENABLE_XR_MODULE
+            cameraData.renderScale = XRSystem.UpdateRenderScale(settings.renderScale);
+#endif
+
             var commonOpaqueFlags = SortingCriteria.CommonOpaque;
             var noFrontToBackOpaqueFlags = SortingCriteria.SortingLayer | SortingCriteria.RenderQueue | SortingCriteria.OptimizeStateChanges | SortingCriteria.CanvasOrder;
             bool hasHSRGPU = SystemInfo.hasHiddenSurfaceRemovalOnGPU;
@@ -509,7 +533,7 @@ namespace UnityEngine.Rendering.Universal
 
             bool needsAlphaChannel = Graphics.preserveFramebufferAlpha;
             cameraData.cameraTargetDescriptor = CreateRenderTextureDescriptor(baseCamera, cameraData.renderScale,
-                cameraData.isStereoEnabled, cameraData.isHdrEnabled, msaaSamples, needsAlphaChannel);
+                cameraData.isHdrEnabled, msaaSamples, needsAlphaChannel);
         }
 
         /// <summary>
@@ -578,7 +602,7 @@ namespace UnityEngine.Rendering.Universal
             // Overlay cameras inherit viewport from base.
             // If the viewport is different between them we might need to patch the projection to adjust aspect ratio
             // matrix to prevent squishing when rendering objects in overlay cameras.
-            if (isOverlayCamera && !camera.orthographic && !cameraData.isStereoEnabled && cameraData.pixelRect != camera.pixelRect)
+            if (isOverlayCamera && !camera.orthographic && cameraData.pixelRect != camera.pixelRect)
             {
                 // m00 = (cotangent / aspect), therefore m00 * aspect gives us cotangent.
                 float cotangent = camera.projectionMatrix.m00 * camera.aspect;
