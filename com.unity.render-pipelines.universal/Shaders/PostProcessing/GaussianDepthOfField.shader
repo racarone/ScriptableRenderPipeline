@@ -22,8 +22,6 @@ Shader "Hidden/Universal Render Pipeline/GaussianDepthOfField"
         TEXTURE2D_X(_FullCoCTexture);
         TEXTURE2D_X(_HalfCoCTexture);
 
-        TEXTURE2D_X_FLOAT(_CameraDepthTexture);
-
         float4 _BlitTex_TexelSize;
         float4 _ColorTexture_TexelSize;
 
@@ -75,7 +73,7 @@ Shader "Hidden/Universal Render Pipeline/GaussianDepthOfField"
         {
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
             float2 uv = UnityStereoTransformScreenSpaceTex(input.uv);
-	    
+
             float depth = LOAD_TEXTURE2D_X(_CameraDepthTexture, _BlitTex_TexelSize.zw * uv).x;
             depth = LinearEyeDepth(depth, _ZBufferParams);
             half coc = (depth - FarStart) / (FarEnd - FarStart);

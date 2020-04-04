@@ -25,8 +25,6 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
         TEXTURE2D_X(_DofTexture);
         TEXTURE2D_X(_FullCoCTexture);
 
-        TEXTURE2D_X_FLOAT(_CameraDepthTexture);
-
         float4 _BlitTex_TexelSize;
         float4 _DofTexture_TexelSize;
         float4 _CoCParams;
